@@ -1,76 +1,45 @@
-//+------------------------------------------------------------------+
-//| EvenOddVolatilityBot.mq5                                        |
-//| Copyright 2024, MetaQuotes Ltd.                                  |
-//+------------------------------------------------------------------+
-input double   LotSize = 0.1;          // Base trade size
-input int      ATR_Period = 14;        // Volatility check period
-input int      LookbackTicks = 100;    // For Even/Odd simulation
-
-//+------------------------------------------------------------------+
-//| Expert initialization function                                   |
-//+------------------------------------------------------------------+
-int OnInit()
-  {
-   return(INIT_SUCCEEDED);
-  }
-
-//+------------------------------------------------------------------+
-//| Expert tick function                                             |
-//+------------------------------------------------------------------+
-void OnTick()
-  {
-// Avoid over-trading
-   static datetime lastTradeTime = 0;
-   if(TimeCurrent() - lastTradeTime < 60) return; // 1 min cooldown
-
-// Get last digit of price (simulate Even/Odd)
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   int lastDigit = (int)MathMod(bid * 100, 10);
-   bool isEven = (lastDigit % 2 == 0);
-
-// Volatility check (ATR)
-   double atr[];
-   CopyBuffer(iATR(_Symbol, PERIOD_M15, ATR_Period), 0, 1, 1, atr);
-   bool isVolatile = atr[0] > (0.005 * SymbolInfoDouble(_Symbol, SYMBOL_POINT));
-
-// Trading logic
-   if(isVolatile)
-     {
-      if(isEven && CountOpenTrades() < 1)
-         ExecuteTrade(ORDER_TYPE_BUY);
-      else if(!isEven && CountOpenTrades() < 1)
-         ExecuteTrade(ORDER_TYPE_SELL);
-     }
-   lastTradeTime = TimeCurrent();
-  }
-
-//+------------------------------------------------------------------+
-//| Execute trade function                                           |
-//+------------------------------------------------------------------+
-void ExecuteTrade(ENUM_ORDER_TYPE orderType)
-  {
-   MqlTradeRequest request = {};
-   request.action = TRADE_ACTION_DEAL;
-   request.symbol = _Symbol;
-   request.volume = LotSize;
-   request.type = orderType;
-   request.price = orderType == ORDER_TYPE_BUY ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : 
-                                               SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   request.deviation = 10;
-   request.type_filling = ORDER_FILLING_FOK;
-   
-   MqlTradeResult result;
-   OrderSend(request, result);
-  }
-
-//+------------------------------------------------------------------+
-//| Count open trades                                                |
-//+------------------------------------------------------------------+
-int CountOpenTrades()
-  {
-   int count = 0;
-   for(int i = PositionsTotal()-1; i >= 0; i--)
-      if(PositionGetSymbol(i) == _Symbol)
-         count++;
-   return count;
-  }
+// In Bot Builder's market selection
+const markets = {
+    evenOdd: 'even_odd',
+    synthesis: 'synthetic_index',
+    volatility: 'volatility_indices'
+};// Configurable parameters
+const config = {
+    baseStake: 10, // Starting stake amount
+    maxTrades: 10, // Maximum consecutive trades
+    martingaleFactor: 2, // Multiplier for loss recovery
+    takeProfit: 20, // Percentage profit target
+    stopLoss: 15, // Percentage loss limit
+    volatilityThreshold: 0.5 // For volatility market detection
+};function checkEvenOddEntry() {
+    // Analyze recent digits for patterns
+    const recentDigits = getRecentDigits(10); // Get last 10 digits
+    const evenCount = recentDigits.filter(d => d % 2 === 0).length;
+    
+    // If even numbers have been dominant, bet odd and vice versa
+    return evenCount > 6 ? 'odd' : (evenCount < 4 ? 'even' : null);
+}function checkVolatilityEntry() {
+    const volatility = calculateVolatility(15); // 15-period volatility
+    
+    if (volatility > config.volatilityThreshold) {
+        // In high volatility, look for mean reversion
+        const rsi = getRSI(14);
+        return rsi > 70 ? 'PUT' : (rsi < 30 ? 'CALL' : null);
+    } else {
+        // In low volatility, follow trends
+        const maShort = getMA(5);
+        const maLong = getMA(15);
+        return maShort > maLong ? 'CALL' : 'PUT';
+    }
+}function calculateStake(consecutiveLosses) {
+    // Martingale-style increase after losses
+    return config.baseStake * Math.pow(config.martingaleFactor, consecutiveLosses);
+}function shouldEarlyExit(trade) {
+    // Take profit or stop loss check
+    const currentProfit = calculateCurrentProfit(trade);
+    
+    if (currentProfit >= config.takeProfit) return 'take_profit';
+    if (currentProfit <= -config.stopLoss) return 'stop_loss';
+    
+    return false;
+}
